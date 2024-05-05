@@ -8,6 +8,12 @@
                     {"SubCategory": "Laptops", "DetailValue": "Dell: $1200"},
                     {"SubCategory": "Cameras", "DetailValue": "Canon: $500"}
                 ]
+            },
+            {
+                "MainCategory": "Appliances",
+                "SubCategories": [
+                    {"SubCategory": "Refrigerators", "DetailValue": "Dell: $1200"}
+                ]
             }
         ]
     },

@@ -37,60 +37,71 @@ func main() {
 		log.Fatalf("Error parsing JSON: %v", err)
 	}
 
-	// Collect all unique subcategories across all products
-	uniqueSubCategories := make(map[string]struct{})
-	for _, product := range products {
-		for _, category := range product.MainCategories {
-			for _, subCategory := range category.SubCategories {
-				uniqueSubCategories[subCategory.SubCategoryName] = struct{}{}
-			}
-		}
-	}
-
-	// Convert map keys to slice for sorting and indexed access
-	subCategoryList := make([]string, 0, len(uniqueSubCategories))
-	for subCat := range uniqueSubCategories {
-		subCategoryList = append(subCategoryList, subCat)
-	}
-	sort.Strings(subCategoryList) // Sort subcategories alphabetically
-
-	// Create a new Excel file
 	workbook := xlsx.NewFile()
 	sheet, err := workbook.AddSheet("Data")
 	if err != nil {
 		log.Fatalf("Error adding sheet to XLSX file: %v", err)
 	}
 
-	// Create a header row for product names starting from the second column
 	header := sheet.AddRow()
-	header.AddCell() // Add an empty cell for the subcategory column
+	header.AddCell() // Add an empty cell for the category column
 	for _, product := range products {
 		cell := header.AddCell()
 		cell.Value = product.ProductName
 	}
 
-	// Create rows for each subcategory
-	for _, subCatName := range subCategoryList {
-		row := sheet.AddRow()
-		row.AddCell().Value = subCatName // Subcategory name in the first column
+	// Map to store unique subcategories for each main category across all products
+	mainCategorySubCats := make(map[string]map[string]bool)
 
-		// Fill in the detail values for each product
-		for _, product := range products {
-			productHasSubCat := false
-			for _, category := range product.MainCategories {
-				for _, subCat := range category.SubCategories {
-					if subCat.SubCategoryName == subCatName {
-						row.AddCell().Value = subCat.DetailValue
-						productHasSubCat = true
+	// First collect all unique subcategories for each main category across all products
+	for _, product := range products {
+		for _, category := range product.MainCategories {
+			if _, ok := mainCategorySubCats[category.CategoryName]; !ok {
+				mainCategorySubCats[category.CategoryName] = make(map[string]bool)
+			}
+			for _, subCategory := range category.SubCategories {
+				mainCategorySubCats[category.CategoryName][subCategory.SubCategoryName] = true
+			}
+		}
+	}
+
+	// Iterate through each main category and list each unique subcategory once
+	for mcName, subCats := range mainCategorySubCats {
+		mcRow := sheet.AddRow()
+		mcCell := mcRow.AddCell()
+		mcCell.Value = mcName
+		mcCell.Merge(len(products), 0) // Merge across product columns for the main category label
+
+		subCategoryList := make([]string, 0, len(subCats))
+		for subCatName := range subCats {
+			subCategoryList = append(subCategoryList, subCatName)
+		}
+		sort.Strings(subCategoryList)
+
+		for _, subCatName := range subCategoryList {
+			subCatRow := sheet.AddRow()
+			subCatRow.AddCell().Value = subCatName
+
+			// Populate detail values across all products for this subcategory
+			for _, product := range products {
+				found := false
+				for _, category := range product.MainCategories {
+					if category.CategoryName == mcName {
+						for _, subCat := range category.SubCategories {
+							if subCat.SubCategoryName == subCatName {
+								subCatRow.AddCell().Value = subCat.DetailValue
+								found = true
+								break
+							}
+						}
+					}
+					if found {
 						break
 					}
 				}
-				if productHasSubCat {
-					break
+				if !found {
+					subCatRow.AddCell().Value = "" // Empty cell if this product's main category doesn't have the subcategory
 				}
-			}
-			if !productHasSubCat {
-				row.AddCell().Value = "" // Empty cell if the product doesn't have this subcategory
 			}
 		}
 	}
