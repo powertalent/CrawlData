@@ -1,0 +1,26 @@
+[
+    {
+        "ProductName": "Product 1",
+        "MainCategories": [
+            {
+                "MainCategory": "Electronics",
+                "SubCategories": [
+                    {"SubCategory": "Laptops", "DetailValue": "Dell: $1200"},
+                    {"SubCategory": "Cameras", "DetailValue": "Canon: $500"}
+                ]
+            }
+        ]
+    },
+    {
+        "ProductName": "Product 2",
+        "MainCategories": [
+            {
+                "MainCategory": "Appliances",
+                "SubCategories": [
+                    {"SubCategory": "Refrigerators", "DetailValue": "Whirlpool: $800"},
+                    {"SubCategory": "Microwaves", "DetailValue": "Samsung: $300"}
+                ]
+            }
+        ]
+    }
+]
