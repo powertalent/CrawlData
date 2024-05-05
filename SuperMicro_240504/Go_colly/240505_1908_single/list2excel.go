@@ -4,6 +4,9 @@ import (
 	"bufio"
 	"fmt"
 	"os"
+	"path"
+	"regexp"
+	"strings"
 
 	"github.com/gocolly/colly/v2"
 	"github.com/xuri/excelize/v2"
@@ -29,7 +32,42 @@ func readURLsFromFile(filePath string) ([]string, error) {
 	return urls, nil
 }
 
+func getColumnName(col int) string {
+	name := make([]byte, 0, 3) // max 16,384 columns (2022)
+	const aLen = 'Z' - 'A' + 1 // alphabet length
+	for ; col > 0; col /= aLen + 1 {
+		name = append(name, byte('A'+(col-1)%aLen))
+	}
+	for i, j := 0, len(name)-1; i < j; i, j = i+1, j-1 {
+		name[i], name[j] = name[j], name[i]
+	}
+	return string(name)
+}
+
+func cleanSheetName(name string) string {
+	// Characters not allowed in Excel sheet names
+	invalidChars := []string{":", "\\", "/", "?", "*", "[", "]"}
+
+	// Replace each invalid character with an underscore or remove it
+	for _, char := range invalidChars {
+		name = strings.Replace(name, char, "", -1) // removes the character
+		// name = strings.Replace(name, char, "_", -1) // or replace it with an underscore
+	}
+
+	// Ensure the sheet name is not too long (Excel limit is 31 characters)
+	if len(name) > 31 {
+		name = name[:31]
+	}
+
+	return name
+}
+
 func main() {
+	urls, err := readURLsFromFile("links.txt")
+	if err != nil {
+		fmt.Println("Error reading URLs from file:", err)
+		return
+	}
 
 	// Create a new Excel file
 	f := excelize.NewFile()
@@ -40,51 +78,88 @@ func main() {
 	}()
 
 	// Counter for Excel rows
-	row := 2
+	row := 1
 
 	// Instantiate default collector
 	c := colly.NewCollector(
 		colly.AllowedDomains("www.supermicro.com"),
 	)
 
+	colIdx := 1
 	// On every a element which has href attribute call callback
-	c.OnHTML(".scrollable-table [class^=specHeader]", func(e *colly.HTMLElement) {
+	c.OnHTML("[class^=specHeader]", func(e *colly.HTMLElement) {
 		header := e.Text
 		// Print link
 		fmt.Printf("Link found: %q -> %s\n", e.Text, header)
-		parentTableDOM := e.DOM.Closest("table").Parent()
+		parentTableDOM := e.DOM.Closest("table")
+
+		// // Use goquery to manipulate HTML
+		// doc := goquery.NewDocumentFromNode(parentTableDOM.Get(0))
+
+		// // Find all <ul> elements and replace them with their own contents
+		// doc.Find("ul").Each(func(index int, item *goquery.Selection) {
+		// 	contentHtml, _ := item.Html()
+		// 	item.ReplaceWithHtml(contentHtml)
+		// })
+
+		// Use goquery to manipulate HTML
+		parentTableDOM.Find("tr:has([class^=specHeader])").Prev().Remove() // This removes the row before header (Empty row)
+		parentTableDOM.Find("img").Closest("tr").Remove()                  // This removes all <img> tags within the table
+
 		parentTableHtml, err := parentTableDOM.Html()
 		if err != nil {
 			fmt.Println("Error getting parent HTML:", err)
 			return
 		}
 
-		// Create a new sheet
-		sheetName := header
-		index, err := f.NewSheet(sheetName)
-		if err != nil {
-			fmt.Println(err)
-			return
+		// Regex to find <ul> tags and their contents
+		re := regexp.MustCompile(`<ul.*?>|</ul>`)
+		parentTableHtml = re.ReplaceAllString(parentTableHtml, "")
+
+		parentTableHtml = "<table>" + parentTableHtml + "</table>"
+
+		// Logic to determine the sheet name based on header content
+		var sheetName string
+		if strings.Contains(header, "Product SKUs") {
+			sheetName = "Product SKUs"
+		} else if strings.Contains(header, "Processor") {
+			sheetName = "Processor"
+		} else if strings.Contains(header, "Chassis") {
+			sheetName = "Chassis"
+		} else {
+			sheetName = cleanSheetName(header)
 		}
-		// Set value of a cell
-		f.SetCellValue(sheetName, "A1", "Link Text")
-		f.SetCellValue(sheetName, "B1", "URL")
+
+		// Get the current list of sheet names
+		sheetMap := f.GetSheetMap()
+		exists := false
+		var sheetIndex int
+
+		// Check if the sheet already exists
+		for idx, name := range sheetMap {
+			if name == sheetName {
+				exists = true
+				sheetIndex = idx
+				break
+			}
+		}
+
+		if !exists {
+			// Create a new sheet if it does not exist
+			sheetIndex, err = f.NewSheet(sheetName)
+			if err != nil {
+				fmt.Println("Error creating new sheet:", err)
+				return
+			}
+		} else {
+			// Set the existing sheet as the active sheet if it exists
+			f.SetActiveSheet(sheetIndex)
+		}
 
 		// Write data to Excel
-		cellA := fmt.Sprintf("A%d", row)
-		cellB := fmt.Sprintf("B%d", row)
-		f.SetCellValue(sheetName, cellA, e.Text)
-		f.SetCellValue(sheetName, cellB, header)
-		// parentHtml, err := e.DOM.Parent().Parent().Parent().Parent().Html() // Capture both the HTML and the error
-		parentHtml, err := e.DOM.Closest("table").Html()
-		if err != nil {
-			fmt.Println("Error getting parent HTML:", err)
-			return
-		}
-		f.SetCellValue("Sheet1", "C1", parentHtml)
-		// Visit link found on page
-		// Only those links are visited which are in AllowedDomains
-		// c.Visit(e.Request.AbsoluteURL(link))
+		cell := fmt.Sprintf("%s%d", getColumnName(colIdx), row)
+		f.SetCellValue(sheetName, cell, parentTableHtml)
+
 	})
 
 	// Before making a request print "Visiting ..."
@@ -93,12 +168,21 @@ func main() {
 
 	})
 
-	c.Visit("https://www.supermicro.com/ja/products/motherboard/A1SAM-2750F")
+	// Loop through all URLs from the file
+	cnt := 1
+	for _, url := range urls {
+		fmt.Println("baseURL ", path.Base(url))
+		f.SetCellValue("Sheet1", fmt.Sprintf("%s%d", getColumnName(colIdx), 1), cnt)              // index
+		f.SetCellValue("Sheet1", fmt.Sprintf("%s%d", getColumnName(colIdx+1), 1), path.Base(url)) // index
+		c.Visit(url)
+		cnt++
+		colIdx += 2
+	}
 
 	// Set active sheet of the workbook
 	f.SetActiveSheet(1)
 	// Save spreadsheet by the given path.
-	if err := f.SaveAs("Book1.xlsx"); err != nil {
+	if err := f.SaveAs("mainboardList.xlsx"); err != nil {
 		fmt.Println(err)
 	}
 }
